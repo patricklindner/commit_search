@@ -44,7 +44,7 @@ public class Main {
                 .findGitDir() // scan up the file system tree
                 .build();
 
-        try (FileWriter writer = new FileWriter("filename.csv")) {
+        try (FileWriter writer = new FileWriter("spring_framework.csv")) {
 
             ObjectReader objectReader = repository.newObjectReader();
 
@@ -91,23 +91,30 @@ public class Main {
 
                                 for (DiffMatchPatch.Diff diffBlock : diffLines) {
                                     if (diffBlock.operation != DiffMatchPatch.Operation.EQUAL) {
-                                        writeMatchToFile(writer, multilineComments.matcher(diffBlock.text), commit, diffBlock);
-                                        writeMatchToFile(writer, singleLineComments.matcher(diffBlock.text), commit, diffBlock);
+                                        writeMatchToFile(writer, multilineComments.matcher(diffBlock.text), commit, diffBlock, true);
+                                        writeMatchToFile(writer, singleLineComments.matcher(diffBlock.text), commit, diffBlock, false);
                                     }
                                 }
                             }
                         }
                     }
                 }
+                //print progress
                 System.out.print("\r" + (currentCommit / (float) numberOfCommits) * 100 + " %");
                 currentCommit++;
             }
         }
     }
 
-    private static void writeMatchToFile(FileWriter writer, Matcher matcher, RevCommit commit, DiffMatchPatch.Diff diffBlock) throws IOException {
+    private static void writeMatchToFile(FileWriter writer, Matcher matcher, RevCommit commit, DiffMatchPatch.Diff diffBlock, boolean multiline) throws IOException {
         while (matcher.find()) {
-            writer.write(diffBlock.operation + "," + commit.getCommitTime() + "," + commit.getId().getName() + "," + matcher.group() + "\n");
+            String formatted;
+            if(multiline) {
+                formatted = String.format("%s,%s,%s,\"%s\"\n", diffBlock.operation, commit.getCommitTime(), commit.getId().getName(), matcher.group());
+            } else {
+                formatted = String.format("%s,%s,%s,%s\n", diffBlock.operation, commit.getCommitTime(), commit.getId().getName(), matcher.group());
+            }
+            writer.write(formatted);
         }
     }
 }
