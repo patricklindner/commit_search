@@ -21,6 +21,12 @@
             <version>6.8.0.202311291450-r</version>
         </dependency>
 
+        <dependency>
+            <groupId>org.bitbucket.cowwoc</groupId>
+            <artifactId>diff-match-patch</artifactId>
+            <version>1.2</version>
+        </dependency>
+
     </dependencies>
 
 </project>

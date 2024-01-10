@@ -9,8 +9,5 @@
         <module name="commit_search" />
       </profile>
     </annotationProcessing>
-    <bytecodeTargetLevel>
-      <module name="commit_search" target="17" />
-    </bytecodeTargetLevel>
   </component>
 </project>
