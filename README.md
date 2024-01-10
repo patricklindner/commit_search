@@ -1,0 +1,1 @@
+To prevent Stackoverflow, configure JVM as follows: -Xss515m -Xms16g -Xmx16g
