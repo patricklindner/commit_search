@@ -12,12 +12,15 @@ import org.eclipse.jgit.treewalk.CanonicalTreeParser;
 import org.eclipse.jgit.treewalk.EmptyTreeIterator;
 import org.eclipse.jgit.util.io.DisabledOutputStream;
 
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
@@ -28,7 +31,9 @@ public class Main {
     static Pattern multilineComments = Pattern.compile("/\\*(?:.|[\\n\\r])*?\\*/");
     static Pattern singleLineComments = Pattern.compile("(\\/\\/.*)");
 
-    public static void main(String[] args) throws IOException, GitAPIException {
+    static int currentCommit = 0;
+
+    public static void main(String[] args) throws IOException, GitAPIException, InterruptedException {
 
         if (args.length != 1) {
             throw new IllegalArgumentException("The first argument should be an absolute path to a valid git repo, cloned to the disk");
@@ -36,14 +41,12 @@ public class Main {
 
         String path = args[0];
         FileRepositoryBuilder builder = new FileRepositoryBuilder();
-        Repository repository = builder.setGitDir(new File(path+"/.git"))
+        Repository repository = builder.setGitDir(new File(path + "/.git"))
                 .readEnvironment() // scan environment GIT_* variables
                 .findGitDir() // scan up the file system tree
                 .build();
 
-        try (FileWriter writer = new FileWriter(getProjectName(path) + ".csv")) {
-
-            ObjectReader objectReader = repository.newObjectReader();
+        try (BufferedWriter writer = new BufferedWriter(new FileWriter(getProjectName(path) + ".csv"))) {
 
             Git git = new Git(repository);
             Iterable<RevCommit> allCommitsForCounting = git.log().all().call();
@@ -52,60 +55,76 @@ public class Main {
 
             Iterable<RevCommit> allCommitsForProcessing = git.log().all().call();
 
-            int currentCommit = 0;
+            ExecutorService executorService = Executors.newFixedThreadPool(8);
+
             for (RevCommit commit : allCommitsForProcessing) {
+                executorService.submit(() -> processCommit(commit, git, repository, writer));
+            }
+            while (true) {
+                //wait for all threads to be finished
+                if (executorService.awaitTermination(1, TimeUnit.SECONDS)) {
+                    break;
+                } else {
+                    System.out.print("\r" + (currentCommit / (float) numberOfCommits) * 100 + " % ");
+                    writer.flush();
+                }
+            }
+            writer.flush();
+        }
+    }
 
-                try (ObjectReader reader = git.getRepository().newObjectReader()) {
-                    AbstractTreeIterator oldTreeIter;
-                    if (commit.getParentCount() > 0) {
-                        RevCommit parentCommit = commit.getParent(0);
-                        CanonicalTreeParser old = new CanonicalTreeParser();
-                        old.reset(reader, parentCommit.getTree());
-                        oldTreeIter = old;
-                    } else {
-                        oldTreeIter = new EmptyTreeIterator();
-                    }
-                    CanonicalTreeParser newTreeIter = new CanonicalTreeParser();
-                    newTreeIter.reset(reader, commit.getTree());
+    private static void processCommit(RevCommit commit, Git git, Repository repository, Writer writer) {
+        try (ObjectReader reader = git.getRepository().newObjectReader()) {
+            AbstractTreeIterator oldTreeIter;
+            if (commit.getParentCount() > 0) {
+                RevCommit parentCommit = commit.getParent(0);
+                CanonicalTreeParser old = new CanonicalTreeParser();
+                old.reset(reader, parentCommit.getTree());
+                oldTreeIter = old;
+            } else {
+                oldTreeIter = new EmptyTreeIterator();
+            }
+            CanonicalTreeParser newTreeIter = new CanonicalTreeParser();
+            newTreeIter.reset(reader, commit.getTree());
 
-                    try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
-                        formatter.setRepository(git.getRepository());
+            try (DiffFormatter formatter = new DiffFormatter(DisabledOutputStream.INSTANCE)) {
+                formatter.setRepository(git.getRepository());
 
-                        List<DiffEntry> diffs = formatter.scan(oldTreeIter, newTreeIter);
+                List<DiffEntry> diffs = formatter.scan(oldTreeIter, newTreeIter);
 
-                        for (DiffEntry diff : diffs) {
+                for (DiffEntry diff : diffs) {
+                    try (ObjectReader objectReader = repository.newObjectReader()) {
 
-                            String oldLine = "";
-                            String newLine = "";
-                            if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
-                                var oldLoader = objectReader.open(diff.getOldId().toObjectId());
-                                oldLine = new String(oldLoader.getBytes(), StandardCharsets.UTF_8);
-                            }
-                            if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
-                                var newLoader = objectReader.open(diff.getNewId().toObjectId());
-                                newLine = new String(newLoader.getBytes(), StandardCharsets.UTF_8);
-                            }
+                        String oldLine = "";
+                        String newLine = "";
+                        if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
+                            var oldLoader = objectReader.open(diff.getOldId().toObjectId());
+                            oldLine = new String(oldLoader.getBytes(), StandardCharsets.UTF_8);
+                        }
+                        if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
+                            var newLoader = objectReader.open(diff.getNewId().toObjectId());
+                            newLine = new String(newLoader.getBytes(), StandardCharsets.UTF_8);
+                        }
 
-                            DiffMatchPatch dmp = new DiffMatchPatch();
-                            LinkedList<DiffMatchPatch.Diff> diffLines = dmp.diffMain(oldLine, newLine);
+                        DiffMatchPatch dmp = new DiffMatchPatch();
+                        LinkedList<DiffMatchPatch.Diff> diffLines = dmp.diffMain(oldLine, newLine);
 
-                            for (DiffMatchPatch.Diff diffBlock : diffLines) {
-                                if (diffBlock.operation != DiffMatchPatch.Operation.EQUAL) {
-                                    writeMatchToFile(writer, multilineComments.matcher(diffBlock.text), commit, diffBlock, true);
-                                    writeMatchToFile(writer, singleLineComments.matcher(diffBlock.text), commit, diffBlock, false);
-                                }
+                        for (DiffMatchPatch.Diff diffBlock : diffLines) {
+                            if (diffBlock.operation != DiffMatchPatch.Operation.EQUAL) {
+                                writeMatchToFile(writer, multilineComments.matcher(diffBlock.text), commit, diffBlock, true);
+                                writeMatchToFile(writer, singleLineComments.matcher(diffBlock.text), commit, diffBlock, false);
                             }
                         }
                     }
                 }
-                //print progress
-                System.out.print("\r" + (currentCommit / (float) numberOfCommits) * 100 + " %");
-                currentCommit++;
             }
+            currentCommit++;
+        } catch (IOException e) {
+            System.out.println(e);
         }
     }
 
-    private static void writeMatchToFile(FileWriter writer, Matcher matcher, RevCommit commit, DiffMatchPatch.Diff diffBlock, boolean multiline) throws IOException {
+    private static void writeMatchToFile(Writer writer, Matcher matcher, RevCommit commit, DiffMatchPatch.Diff diffBlock, boolean multiline) throws IOException {
         while (matcher.find()) {
             String formatted;
             if (multiline) {
