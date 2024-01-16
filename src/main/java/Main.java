@@ -14,12 +14,10 @@ import org.eclipse.jgit.util.io.DisabledOutputStream;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -28,10 +26,13 @@ import java.util.stream.StreamSupport;
 
 public class Main {
 
-    static Pattern multilineComments = Pattern.compile("/\\*(?:.|[\\n\\r])*?\\*/");
-    static Pattern singleLineComments = Pattern.compile("(\\/\\/.*)");
+    static final int NUMBER_OF_THREADS = 12;
+    static final Pattern MULTILINE_COMMENTS = Pattern.compile("/\\*(?:.|[\\n\\r])*?\\*/");
+    static final Pattern SINGLE_LINE_COMMENTS = Pattern.compile("(\\/\\/.*)");
+
 
     static int currentCommit = 0;
+
 
     public static void main(String[] args) throws IOException, GitAPIException, InterruptedException {
 
@@ -55,7 +56,7 @@ public class Main {
 
             Iterable<RevCommit> allCommitsForProcessing = git.log().all().call();
 
-            ExecutorService executorService = Executors.newFixedThreadPool(8);
+            ExecutorService executorService = Executors.newFixedThreadPool(NUMBER_OF_THREADS);
 
             for (RevCommit commit : allCommitsForProcessing) {
                 executorService.submit(() -> processCommit(commit, git, repository, writer));
@@ -97,13 +98,19 @@ public class Main {
 
                         String oldLine = "";
                         String newLine = "";
+                        String fileName = "";
                         if (diff.getChangeType() != DiffEntry.ChangeType.ADD) {
                             var oldLoader = objectReader.open(diff.getOldId().toObjectId());
                             oldLine = new String(oldLoader.getBytes(), StandardCharsets.UTF_8);
+                            fileName = diff.getOldPath();
                         }
                         if (diff.getChangeType() != DiffEntry.ChangeType.DELETE) {
                             var newLoader = objectReader.open(diff.getNewId().toObjectId());
                             newLine = new String(newLoader.getBytes(), StandardCharsets.UTF_8);
+                            fileName = diff.getNewPath();
+                        }
+                        if (!fileName.endsWith("java")) {
+                            continue;
                         }
 
                         DiffMatchPatch dmp = new DiffMatchPatch();
@@ -111,8 +118,8 @@ public class Main {
 
                         for (DiffMatchPatch.Diff diffBlock : diffLines) {
                             if (diffBlock.operation != DiffMatchPatch.Operation.EQUAL) {
-                                writeMatchToFile(writer, multilineComments.matcher(diffBlock.text), commit, diffBlock, true);
-                                writeMatchToFile(writer, singleLineComments.matcher(diffBlock.text), commit, diffBlock, false);
+                                writeMatchToFile(writer, MULTILINE_COMMENTS.matcher(diffBlock.text), commit, diffBlock, true);
+                                writeMatchToFile(writer, SINGLE_LINE_COMMENTS.matcher(diffBlock.text), commit, diffBlock, false);
                             }
                         }
                     }
