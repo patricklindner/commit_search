@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
 import java.util.stream.StreamSupport;
 
 
-public class Main {
+public class CommentFinder {
 
     static final int NUMBER_OF_THREADS = 12;
     static final Pattern MULTILINE_COMMENTS = Pattern.compile("/\\*(?:.|[\\n\\r])*?\\*/");
@@ -143,7 +143,7 @@ public class Main {
         }
     }
 
-    private static String getProjectName(String path) {
+    public static String getProjectName(String path) {
         String[] split = path.split("/");
         return split[split.length - 1];
     }
