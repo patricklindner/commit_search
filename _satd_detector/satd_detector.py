@@ -294,7 +294,7 @@ def main():
     """
     d = SATDDetector(get_params())
     # simple_test(d)
-    runFile('./hadoop.csv','hadoop_classified.csv' )
+    runFile('./maven.csv','maven_classified.csv' )
 
 
 if __name__ == '__main__':
